@@ -1,0 +1,45 @@
+#pragma once
+
+#ifdef _KERNEL_MODE
+#include <ntddk.h>
+#else
+#include <windows.h>
+#endif
+
+// Define IOCTL codes for communication between usermode and kernelmode
+#define KIRO_DEVICE_TYPE 0x8000
+
+#define IOCTL_KIRO_RESET_IDS \
+    CTL_CODE(KIRO_DEVICE_TYPE, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_KIRO_CLEAR_CACHE \
+    CTL_CODE(KIRO_DEVICE_TYPE, 0x801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_KIRO_WRITE_REGISTRY \
+    CTL_CODE(KIRO_DEVICE_TYPE, 0x802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_KIRO_DELETE_REGISTRY \
+    CTL_CODE(KIRO_DEVICE_TYPE, 0x803, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define IOCTL_KIRO_CLEAN_REGISTRY_PATTERN \
+    CTL_CODE(KIRO_DEVICE_TYPE, 0x804, METHOD_BUFFERED, FILE_ANY_ACCESS)
+
+#define KIRO_OUTPUT_MAX 512
+#define KIRO_MAX_PATH 260
+
+typedef struct _KIRO_RESET_INPUT {
+    char NewMachineGuid[64];
+    char NewDevDeviceGuid[37];
+    char NewSqmId[39];
+    char NewCrashId[37];
+} KIRO_RESET_INPUT, *PKIRO_RESET_INPUT;
+
+typedef struct _KIRO_CACHE_INPUT {
+    wchar_t BasePath[KIRO_MAX_PATH];
+} KIRO_CACHE_INPUT, *PKIRO_CACHE_INPUT;
+
+typedef struct _KIRO_REGISTRY_INPUT {
+    wchar_t KeyPath[KIRO_MAX_PATH];
+    wchar_t ValueName[KIRO_MAX_PATH];
+    wchar_t ValueData[KIRO_MAX_PATH];
+} KIRO_REGISTRY_INPUT, *PKIRO_REGISTRY_INPUT;

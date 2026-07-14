@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{4A2B6C8E-1234-4A2B-8C8E-12344A2B6C8E}</ProjectGuid>
+    <TemplateGuid>{14101F50-1234-11D0-1234-00A0C91EFB8B}</TemplateGuid>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <MinimumVisualStudioVersion>12.0</MinimumVisualStudioVersion>
+    <Configuration>Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">x64</Platform>
+    <RootNamespace>KiroDriver</RootNamespace>
+    <WindowsTargetPlatformVersion>10.0.26100.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  
+  <Import Project="C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.Default.props" />
+  
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <TargetVersion>Windows10</TargetVersion>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v143</PlatformToolset>
+    <ConfigurationType>Driver</ConfigurationType>
+    <DriverType>KMDF</DriverType>
+    <DriverTargetPlatforms>Desktop</DriverTargetPlatforms>
+  </PropertyGroup>
+  
+  <Import Project="C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.props" Condition="Exists('C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.props')" />
+  <Import Project="C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.Common.props" Condition="!Exists('C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.props')" />
+  
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  
+  <ImportGroup Label="ExtensionSettings" />
+  <ImportGroup Label="PropertySheets" />
+  <PropertyGroup Label="UserMacros" />
+  <PropertyGroup />
+  
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WppEnabled>false</WppEnabled>
+      <PreprocessorDefinitions>_WIN64;_AMD64_;AMD64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+    </Link>
+  </ItemDefinitionGroup>
+  
+  <ItemGroup>
+    <FilesToPackage Include="$(TargetPath)" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="main.c" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="common.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <Inf Include="KiroDriver.inf" />
+  </ItemGroup>
+  
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Import Project="C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.targets" Condition="Exists('C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.targets')" />
+  <Import Project="C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.Common.targets" Condition="!Exists('C:\Program Files (x86)\Windows Kits\10\build\10.0.28000.0\WindowsDriver.targets')" />
+  
+  <ImportGroup Label="ExtensionTargets" />
+</Project>

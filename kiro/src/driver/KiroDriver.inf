@@ -1,0 +1,45 @@
+[Version]
+Signature="$WINDOWS NT$"
+Class=Sample
+ClassGuid={78A1C341-4539-11d3-B88D-00C04FAD5171}
+Provider=%ManufacturerName%
+CatalogFile=KiroDriver.cat
+DriverVer=
+
+[DestinationDirs]
+DefaultDestDir = 12
+
+[SourceDisksNames]
+1 = %DiskName%,,,
+
+[SourceDisksFiles]
+KiroDriver.sys  = 1,,
+
+[Manufacturer]
+%ManufacturerName%=Standard,NT$ARCH$
+
+[Standard.NT$ARCH$]
+%KiroDriver.DeviceDesc%=KiroDriver_Device, Root\KiroDriver
+
+[KiroDriver_Device.NT]
+CopyFiles=Drivers_Dir
+
+[Drivers_Dir]
+KiroDriver.sys
+
+[KiroDriver_Device.NT.Services]
+AddService = KiroDriver,%SPSVCINST_ASSOCSERVICE%, KiroDriver_Service_Inst
+
+[KiroDriver_Service_Inst]
+DisplayName    = %KiroDriver.SVCDESC%
+ServiceType    = 1               ; SERVICE_KERNEL_DRIVER
+StartType      = 3               ; SERVICE_DEMAND_START
+ErrorControl   = 1               ; SERVICE_ERROR_NORMAL
+ServiceBinary  = %12%\KiroDriver.sys
+
+[Strings]
+SPSVCINST_ASSOCSERVICE= 0x00000002
+ManufacturerName="Kiro Reset"
+DiskName="KiroDriver Installation Disk"
+KiroDriver.DeviceDesc="Kiro Driver Device"
+KiroDriver.SVCDESC="Kiro Driver Service"
