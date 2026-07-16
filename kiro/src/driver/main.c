@@ -180,6 +180,12 @@ static NTSTATUS KiroDeleteRegistryValuesByPattern(
     PKEY_VALUE_FULL_INFORMATION valueInfo = NULL;
     ULONG bufferSize = 4096;
     ULONG index = 0;
+    BOOLEAN deletedSomething = FALSE;
+
+    // Validate input parameters
+    if (KeyPath == NULL || Pattern == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
 
     RtlInitUnicodeString(&keyPath, KeyPath);
     InitializeObjectAttributes(&objAttr, &keyPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
@@ -195,7 +201,36 @@ static NTSTATUS KiroDeleteRegistryValuesByPattern(
         return STATUS_INSUFFICIENT_RESOURCES;
     }
 
+    // First pass: count matching entries
+    ULONG matchCount = 0;
     for (index = 0; ; index++) {
+        status = ZwEnumerateValueKey(keyHandle, index, KeyValueFullInformation,
+                                      valueInfo, bufferSize, &resultLength);
+        
+        if (status == STATUS_NO_MORE_ENTRIES) break;
+        if (status == STATUS_BUFFER_OVERFLOW) {
+            ExFreePoolWithTag(valueInfo, 'Kiro');
+            bufferSize = resultLength + 512;
+            valueInfo = (PKEY_VALUE_FULL_INFORMATION)ExAllocatePoolWithTag(NonPagedPool, bufferSize, 'Kiro');
+            if (valueInfo == NULL) {
+                ZwClose(keyHandle);
+                return STATUS_INSUFFICIENT_RESOURCES;
+            }
+            --index; // Retry same index with larger buffer
+            continue;
+        }
+        if (!NT_SUCCESS(status)) break;
+
+        // Check if value name matches pattern
+        if (valueInfo->NameLength > 0 && wcsstr(valueInfo->Name, Pattern) != NULL) {
+            matchCount++;
+        }
+    }
+
+    // Reset enumeration and delete matching entries
+    // We need to restart because deletion changes indices
+    index = 0;
+    while (TRUE) {
         status = ZwEnumerateValueKey(keyHandle, index, KeyValueFullInformation,
                                       valueInfo, bufferSize, &resultLength);
         
@@ -213,21 +248,25 @@ static NTSTATUS KiroDeleteRegistryValuesByPattern(
         if (!NT_SUCCESS(status)) break;
 
         // Check if value name matches pattern
-        UNICODE_STRING valueName;
-        valueName.Buffer = valueInfo->Name;
-        valueName.Length = (USHORT)valueInfo->NameLength;
-        valueName.MaximumLength = (USHORT)valueInfo->NameLength;
-
-        if (wcsstr(valueInfo->Name, Pattern) != NULL) {
-            // Delete this value
-            ZwDeleteValueKey(keyHandle, &valueName);
-            DbgPrint("KiroDriver: Deleted matching value %wZ\n", &valueName);
+        if (valueInfo->NameLength > 0 && wcsstr(valueInfo->Name, Pattern) != NULL) {
+            // Delete this value - don't increment index since deletion shifts remaining entries
+            UNICODE_STRING valueName;
+            RtlInitUnicodeString(&valueName, valueInfo->Name);
+            status = ZwDeleteValueKey(keyHandle, &valueName);
+            if (NT_SUCCESS(status)) {
+                DbgPrint("KiroDriver: Deleted matching value %wZ\n", &valueName);
+                deletedSomething = TRUE;
+            }
+            // Don't increment index - next entry shifts to current position
+        } else {
+            index++; // Only increment when not deleting
         }
     }
 
     ExFreePoolWithTag(valueInfo, 'Kiro');
     ZwClose(keyHandle);
-    return STATUS_SUCCESS;
+    
+    return deletedSomething ? STATUS_SUCCESS : STATUS_NOT_FOUND;
 }
 
 // File system helper - delete directory recursively
@@ -238,8 +277,21 @@ static NTSTATUS KiroDeleteDirectoryRecursive(_In_ PCWSTR DirectoryPath) {
     NTSTATUS status;
     IO_STATUS_BLOCK ioStatus;
     PUCHAR buffer = NULL;
-    ULONG bufferSize = 4096;
+    ULONG bufferSize = 8192;  // Larger buffer for better performance
     BOOLEAN restartScan = TRUE;
+    size_t dirPathLen = 0;
+
+    // Validate input
+    if (DirectoryPath == NULL) {
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    // Check path length to prevent overflow
+    dirPathLen = wcslen(DirectoryPath);
+    if (dirPathLen == 0 || dirPathLen >= KIRO_MAX_PATH - 50) {
+        DbgPrint("KiroDriver: Invalid directory path length\n");
+        return STATUS_INVALID_PARAMETER;
+    }
 
     RtlInitUnicodeString(&dirPath, DirectoryPath);
     InitializeObjectAttributes(&objAttr, &dirPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
@@ -276,26 +328,42 @@ static NTSTATUS KiroDeleteDirectoryRecursive(_In_ PCWSTR DirectoryPath) {
 
         PFILE_DIRECTORY_INFORMATION dirInfo = (PFILE_DIRECTORY_INFORMATION)buffer;
 
+        // Skip . and .. entries
         if (dirInfo->FileNameLength == 2 && dirInfo->FileName[0] == L'.' && dirInfo->FileName[1] == L'.') continue;
         if (dirInfo->FileNameLength == 1 && dirInfo->FileName[0] == L'.') continue;
 
-        UNICODE_STRING fileName;
-        fileName.Buffer = dirInfo->FileName;
-        fileName.Length = (USHORT)dirInfo->FileNameLength;
-        fileName.MaximumLength = (USHORT)dirInfo->FileNameLength;
+        // Build full path safely
+        WCHAR subPath[KIRO_MAX_PATH];
+        size_t fileNameLen = dirInfo->FileNameLength / sizeof(WCHAR);
+        
+        // Check if combined path would overflow
+        if (dirPathLen + 1 + fileNameLen >= KIRO_MAX_PATH - 1) {
+            DbgPrint("KiroDriver: Subpath too long, skipping\n");
+            continue;
+        }
+
+        // Safe string concatenation
+        RtlZeroMemory(subPath, sizeof(subPath));
+        RtlStringCchCopyW(subPath, KIRO_MAX_PATH, DirectoryPath);
+        RtlStringCchCatW(subPath, KIRO_MAX_PATH, L"\\");
+        // Only copy the actual filename length, not a fixed buffer size
+        RtlStringCchCopyNW(subPath + dirPathLen + 1, KIRO_MAX_PATH - dirPathLen - 1, 
+                           dirInfo->FileName, dirInfo->FileNameLength);
 
         if (dirInfo->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             // Recursively delete subdirectory
-            WCHAR subPath[KIRO_MAX_PATH];
-            RtlStringCchCopyNW(subPath, KIRO_MAX_PATH, DirectoryPath, KIRO_MAX_PATH - 1);
-            RtlStringCchCatNW(subPath, KIRO_MAX_PATH, L"\\", KIRO_MAX_PATH - 1);
-            RtlStringCchCatNW(subPath, KIRO_MAX_PATH, fileName.Buffer, KIRO_MAX_PATH - 1);
-            KiroDeleteDirectoryRecursive(subPath);
+            status = KiroDeleteDirectoryRecursive(subPath);
+            if (!NT_SUCCESS(status)) {
+                DbgPrint("KiroDriver: Failed to delete subdir %ws (0x%08X)\n", subPath, status);
+            }
         } else {
-            // Delete file
-            HANDLE fileHandle;
+            // Delete file - build proper object attributes with full path
+            UNICODE_STRING fullPath;
+            RtlInitUnicodeString(&fullPath, subPath);
             OBJECT_ATTRIBUTES fileAttr;
-            InitializeObjectAttributes(&fileAttr, &fileName, OBJ_CASE_INSENSITIVE, dirHandle, NULL);
+            InitializeObjectAttributes(&fileAttr, &fullPath, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+            
+            HANDLE fileHandle;
             status = ZwOpenFile(&fileHandle, DELETE | SYNCHRONIZE, &fileAttr, &ioStatus,
                                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                                 FILE_NON_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT);
@@ -304,6 +372,7 @@ static NTSTATUS KiroDeleteDirectoryRecursive(_In_ PCWSTR DirectoryPath) {
                 dispInfo.DeleteFile = TRUE;
                 ZwSetInformationFile(fileHandle, &ioStatus, &dispInfo, sizeof(dispInfo), FileDispositionInformation);
                 ZwClose(fileHandle);
+                DbgPrint("KiroDriver: Deleted file %ws\n", subPath);
             }
         }
     }
@@ -428,38 +497,64 @@ NTSTATUS KiroDeviceControl(_In_ PDEVICE_OBJECT DeviceObject, _In_ PIRP Irp) {
         DbgPrint("KiroDriver: Reset IDs machineId=%s devDeviceId=%s\n", 
                  input->NewMachineGuid, input->NewDevDeviceGuid);
 
-        // Convert ANSI to Unicode for registry
-        WCHAR machineGuidW[65], devDeviceGuidW[38], sqmIdW[40], crashIdW[38];
+        // Convert ANSI to Unicode for registry with proper null checks
+        WCHAR machineGuidW[65] = {0}, devDeviceGuidW[38] = {0}, sqmIdW[40] = {0}, crashIdW[38] = {0};
         ANSI_STRING ansiStr;
         UNICODE_STRING unicodeStr;
+        NTSTATUS convertStatus;
 
-        // Machine ID
+        // Machine ID - safe conversion with null check
         RtlInitAnsiString(&ansiStr, input->NewMachineGuid);
         unicodeStr.Buffer = machineGuidW;
         unicodeStr.MaximumLength = sizeof(machineGuidW);
         unicodeStr.Length = 0;
-        RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        convertStatus = RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        if (!NT_SUCCESS(convertStatus)) {
+            KiroAppendStr(response, sizeof(response), "KIRO: string conversion failed");
+            status = convertStatus;
+            break;
+        }
+        // Ensure null termination
+        machineGuidW[unicodeStr.Length / sizeof(WCHAR)] = L'\0';
 
         // Dev Device ID
         RtlInitAnsiString(&ansiStr, input->NewDevDeviceGuid);
         unicodeStr.Buffer = devDeviceGuidW;
         unicodeStr.MaximumLength = sizeof(devDeviceGuidW);
         unicodeStr.Length = 0;
-        RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        convertStatus = RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        if (!NT_SUCCESS(convertStatus)) {
+            KiroAppendStr(response, sizeof(response), "KIRO: string conversion failed");
+            status = convertStatus;
+            break;
+        }
+        devDeviceGuidW[unicodeStr.Length / sizeof(WCHAR)] = L'\0';
 
         // SQM ID
         RtlInitAnsiString(&ansiStr, input->NewSqmId);
         unicodeStr.Buffer = sqmIdW;
         unicodeStr.MaximumLength = sizeof(sqmIdW);
         unicodeStr.Length = 0;
-        RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        convertStatus = RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        if (!NT_SUCCESS(convertStatus)) {
+            KiroAppendStr(response, sizeof(response), "KIRO: string conversion failed");
+            status = convertStatus;
+            break;
+        }
+        sqmIdW[unicodeStr.Length / sizeof(WCHAR)] = L'\0';
 
         // Crash ID
         RtlInitAnsiString(&ansiStr, input->NewCrashId);
         unicodeStr.Buffer = crashIdW;
         unicodeStr.MaximumLength = sizeof(crashIdW);
         unicodeStr.Length = 0;
-        RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        convertStatus = RtlAnsiStringToUnicodeString(&unicodeStr, &ansiStr, FALSE);
+        if (!NT_SUCCESS(convertStatus)) {
+            KiroAppendStr(response, sizeof(response), "KIRO: string conversion failed");
+            status = convertStatus;
+            break;
+        }
+        crashIdW[unicodeStr.Length / sizeof(WCHAR)] = L'\0';
 
         // Write to registry - these are the same paths the PowerShell script uses
         // We'll write to a kernel-level location that overrides usermode
