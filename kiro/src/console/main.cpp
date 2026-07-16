@@ -32,64 +32,92 @@ static std::string GenMachineId64() {
 
 static std::vector<std::wstring> GetKiroCachePaths() {
     std::vector<std::wstring> paths;
-    char* appdata = nullptr;
+    wchar_t* appdataW = nullptr;
     size_t len = 0;
+    errno_t err;
 
-    // Get APPDATA
-    _dupenv_s(&appdata, &len, "APPDATA");
-    if (appdata) {
-        std::string roaming(appdata);
-        free(appdata);
+    // Get APPDATA using wide character version for safety
+    err = _wdupenv_s(&appdataW, &len, L"APPDATA");
+    if (err == 0 && appdataW != nullptr) {
+        std::wstring roaming(appdataW);
+        free(appdataW);
 
         // Main Kiro data directories
-        std::vector<std::string> folders = {
-            "Cache", "Code Cache", "GPUCache", "CachedData",
-            "DawnGraphiteCache", "DawnWebGPUCache", "Network",
-            "logs", "Crashpad", "Local Storage", "Session Storage",
-            "Service Worker", "Shared Dictionary"
+        std::vector<std::wstring> folders = {
+            L"Cache", L"Code Cache", L"GPUCache", L"CachedData",
+            L"DawnGraphiteCache", L"DawnWebGPUCache", L"Network",
+            L"logs", L"Crashpad", L"Local Storage", L"Session Storage",
+            L"Service Worker", L"Shared Dictionary"
         };
 
         for (const auto& folder : folders) {
-            std::string fullPath = roaming + "\\Kiro\\" + folder;
-            std::wstring wFullPath(fullPath.begin(), fullPath.end());
-            paths.push_back(wFullPath);
+            std::wstring fullPath = roaming + L"\\Kiro\\" + folder;
+            // Validate path length before adding
+            if (fullPath.length() < MAX_PATH - 1) {
+                paths.push_back(fullPath);
+            }
         }
 
         // Add workspace and global storage
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Kiro\\User\\History");
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Kiro\\User\\workspaceStorage");
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Kiro\\User\\globalStorage\\kiro.kiroagent");
+        std::wstring basePath = roaming + L"\\Kiro\\User";
+        if (basePath.length() < MAX_PATH - 20) {
+            paths.push_back(basePath + L"\\History");
+            paths.push_back(basePath + L"\\workspaceStorage");
+            paths.push_back(basePath + L"\\globalStorage\\kiro.kiroagent");
+        }
         
-        // Add entire Kiro directory
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Kiro");
+        // Add entire Kiro directory (validate first)
+        std::wstring kiroDir = roaming + L"\\Kiro";
+        if (kiroDir.length() < MAX_PATH - 1) {
+            paths.push_back(kiroDir);
+        }
 
         // Windows Recent files
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Microsoft\\Windows\\Recent");
+        std::wstring recentDir = roaming + L"\\Microsoft\\Windows\\Recent";
+        if (recentDir.length() < MAX_PATH - 1) {
+            paths.push_back(recentDir);
+        }
         
         // Start Menu Programs
-        paths.push_back(std::wstring(roaming.begin(), roaming.end()) + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Kiro");
+        std::wstring programsDir = roaming + L"\\Microsoft\\Windows\\Start Menu\\Programs\\Kiro";
+        if (programsDir.length() < MAX_PATH - 1) {
+            paths.push_back(programsDir);
+        }
     }
 
     // Get LOCALAPPDATA
-    _dupenv_s(&appdata, &len, "LOCALAPPDATA");
-    if (appdata) {
-        std::string local(appdata);
-        free(appdata);
-        paths.push_back(std::wstring(local.begin(), local.end()) + L"\\Programs\\Kiro");
+    err = _wdupenv_s(&appdataW, &len, L"LOCALAPPDATA");
+    if (err == 0 && appdataW != nullptr) {
+        std::wstring local(appdataW);
+        free(appdataW);
+        std::wstring localPath = local + L"\\Programs\\Kiro";
+        if (localPath.length() < MAX_PATH - 1) {
+            paths.push_back(localPath);
+        }
     }
 
     // Get USERPROFILE
-    _dupenv_s(&appdata, &len, "USERPROFILE");
-    if (appdata) {
-        std::string user(appdata);
-        free(appdata);
-        paths.push_back(std::wstring(user.begin(), user.end()) + L"\\.kiro");
+    err = _wdupenv_s(&appdataW, &len, L"USERPROFILE");
+    if (err == 0 && appdataW != nullptr) {
+        std::wstring user(appdataW);
+        free(appdataW);
+        
+        std::wstring kiroDot = user + L"\\.kiro";
+        if (kiroDot.length() < MAX_PATH - 1) {
+            paths.push_back(kiroDot);
+        }
         
         // AWS SSO cache
-        paths.push_back(std::wstring(user.begin(), user.end()) + L"\\.aws\\sso\\cache");
+        std::wstring awsSso = user + L"\\.aws\\sso\\cache";
+        if (awsSso.length() < MAX_PATH - 1) {
+            paths.push_back(awsSso);
+        }
         
         // Trae data
-        paths.push_back(std::wstring(user.begin(), user.end()) + L"\\.trae");
+        std::wstring traeDir = user + L"\\.trae";
+        if (traeDir.length() < MAX_PATH - 1) {
+            paths.push_back(traeDir);
+        }
     }
 
     return paths;
@@ -188,10 +216,17 @@ int main() {
             else if (choice == 2) {
                 std::cout << "path> ";
                 std::wstring path;
-                std::wcin >> path;
+                // Use getline instead of >> to handle paths with spaces safely
+                std::getline(std::wcin, path);
+                
+                // Validate path length before using
+                if (path.empty() || path.length() >= KIRO_MAX_PATH - 1) {
+                    std::cerr << "[console] Invalid path (empty or too long)" << std::endl;
+                    continue;
+                }
 
                 KIRO_CACHE_INPUT in{};
-                wcsncpy_s(in.BasePath, path.c_str(), MAX_PATH - 1);
+                wcsncpy_s(in.BasePath, KIRO_MAX_PATH, path.c_str(), _TRUNCATE);
 
                 char outBuf[KIRO_OUTPUT_MAX] = {};
                 std::string resp = SendIoctl(hDevice, IOCTL_KIRO_CLEAR_CACHE,
@@ -205,18 +240,26 @@ int main() {
             else if (choice == 3) {
                 std::cout << "keyPath> ";
                 std::wstring keyPath;
-                std::wcin >> keyPath;
+                std::getline(std::wcin, keyPath);
                 std::cout << "valueName> ";
                 std::wstring valueName;
-                std::wcin >> valueName;
+                std::getline(std::wcin, valueName);
                 std::cout << "valueData> ";
                 std::wstring valueData;
-                std::wcin >> valueData;
+                std::getline(std::wcin, valueData);
+
+                // Validate input lengths
+                if (keyPath.empty() || keyPath.length() >= KIRO_MAX_PATH - 1 ||
+                    valueName.length() >= KIRO_MAX_PATH - 1 ||
+                    valueData.length() >= KIRO_MAX_PATH - 1) {
+                    std::cerr << "[console] Invalid input (empty or too long)" << std::endl;
+                    continue;
+                }
 
                 KIRO_REGISTRY_INPUT in{};
-                wcsncpy_s(in.KeyPath, keyPath.c_str(), MAX_PATH - 1);
-                wcsncpy_s(in.ValueName, valueName.c_str(), MAX_PATH - 1);
-                wcsncpy_s(in.ValueData, valueData.c_str(), MAX_PATH - 1);
+                wcsncpy_s(in.KeyPath, KIRO_MAX_PATH, keyPath.c_str(), _TRUNCATE);
+                wcsncpy_s(in.ValueName, KIRO_MAX_PATH, valueName.c_str(), _TRUNCATE);
+                wcsncpy_s(in.ValueData, KIRO_MAX_PATH, valueData.c_str(), _TRUNCATE);
 
                 char outBuf[KIRO_OUTPUT_MAX] = {};
                 std::string resp = SendIoctl(hDevice, IOCTL_KIRO_WRITE_REGISTRY,
@@ -258,8 +301,14 @@ int main() {
                 std::vector<std::wstring> cachePaths = GetKiroCachePaths();
                 int clearedCount = 0;
                 for (const auto& cachePath : cachePaths) {
+                    // Skip paths that are too long
+                    if (cachePath.length() >= KIRO_MAX_PATH - 1) {
+                        std::cerr << "[nuclear] Skipping path too long: " << cachePath.length() << " chars" << std::endl;
+                        continue;
+                    }
+                    
                     KIRO_CACHE_INPUT cacheIn{};
-                    wcsncpy_s(cacheIn.BasePath, cachePath.c_str(), KIRO_MAX_PATH - 1);
+                    wcsncpy_s(cacheIn.BasePath, KIRO_MAX_PATH, cachePath.c_str(), _TRUNCATE);
 
                     resp = SendIoctl(hDevice, IOCTL_KIRO_CLEAR_CACHE,
                                     &cacheIn, sizeof(cacheIn), outBuf, sizeof(outBuf));
